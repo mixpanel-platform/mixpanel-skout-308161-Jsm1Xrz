@@ -7,9 +7,176 @@
     <script src="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.js"></script>
   </head>
   <body class="mixpanel-platform-body">
-    <h1>Hello, World!</h1>
+    <div class="mixpanel-platform-section">
+    <div id="dateSelect" style="float: right;"></div>
+    <br clear="all" /><br clear="all" />
+    <input type="button" name="submitButton" id="submitButton" onclick="runQuery()" value="Export Top Events" style="font-weight: bold; color: rgb(95,105,131); font-size: 12px; height: 31px; padding: 0 10px; margin-left: 10px; border: 1px solid rgb(201,209,219); background-color: rgb(242,244,246)">
+    <div id="propSelect" style="float: right"></div>
+    <br clear="all" /><br clear="all" />
+    <div id="propValueSelect" style="float: right"></div>
+    <br clear="all" /><br clear="all" />
+    </div>
     <script>
-      // Run queries and display results here
+    var dateSelect  = $('#dateSelect').MPDatepicker();
+    
+    /* Property dropdown setup */
+    // ADD THIS ALL IN AN ONLOAD (last priority)
+    // Get top properties for top event and organize them
+    MP.api.topEvents({'limit':1}).done(function(results) {
+      window.topEvent = results.values()[0];
+      MP.api.topProperties(results.values()[0], {'limit':200}).done(function(results) {
+          var options = {};
+          var itemList = [];
+          itemList.push({label:'-- no property --', value:null});
+          for (property in results.values()){
+            itemList.push({label:property,value:property});
+          }
+          options['items'] = itemList;
+          window.itemListFinal = options;
+          $('#propSelect').MPSelect(options);
+          generatePropertyValues();
+      });
+    });
+    /* End property dropdown setup */
+    
+    Object.size = function(obj) {
+        var size = 0, key;
+        for (key in obj) {
+            if (obj.hasOwnProperty(key)) size++;
+        }
+        return size;
+    };
+    
+    /* Main query function */
+    var runQuery = function () {
+      window.dates = dateSelect.MPDatepicker('value');
+      var params = window.dates;
+      window.eventsList = [];
+      // top 100 events
+      params['limit'] = 100;
+      MP.api.topEvents(params).done(function(results) {
+        var params2 = window.dates;
+        params2['type'] = 'general';
+        params2['unit'] = 'day';
+        propertyName = $('#propSelect').val();
+        propertyValue = $('#actualPropValSelect').val();
+        console.log("property name = "+propertyName+", property value = "+propertyValue);
+        if(propertyName){
+          params2['where'] = 'properties["'+propertyName+'"] == "'+propertyValue+'"'; 
+          console.log('segmenting on property');
+        }
+        else{
+          console.log('clearing prop segmentation param');
+          params2['where'] = '';
+        }
+        window.eventCount = Object.size(results.values());
+        for(key in results.values()) {
+          MP.api.events(results.values()[key], params2).done(function(results) {
+            window.eventsList.push(results.values());
+            if(window.eventsList.length == window.eventCount){
+              downloadCSV(window.eventsList, "export");
+            }
+          });
+        }
+      });
+    }
+    
+    /* Function that downloads CSV */
+    function downloadCSV(data, ReportTitle) {
+      var CSV = '';
+      var sortedDates = [];
+      console.log(data);
+      
+      //Write the headers
+      var row = ''
+      row += 'date, '
+      for(var i = 0; i < data.length; i++) {
+        for(key in data[i]) {
+          row += key + ','; 
+        }
+      }
+      CSV += row + '\r\n';
+      
+      // Create sorted  list of dates
+      for(key in data[0]){
+        // goes through each date in array element 0 with key == first event
+        for(date in data[0][key]) {
+          sortedDates.push(date);
+        }
+      }
+      sortedDates = sortedDates.sort();
+      
+      //Write the data
+      
+      // goes through each date 
+      for(var a = 0; a < sortedDates.length; a++) {
+        // add date in first column
+        var row = '';
+        row += sortedDates[a] + ',';
+        // for the X events in data...
+        for(var i = 0; i < data.length; i++) {
+          // get the event name...
+          for(event in data[i]){
+            // use the event name and the current date we're on to get event count
+            row += data[i][event][sortedDates[a]] + ',';
+          }
+        }
+        CSV += row + '\r\n';
+      }
+      
+      //Generate a file name
+      var fileName = ReportTitle.replace(/ /g,"_");   
+  
+      //Initialize file format you want csv or xls
+      var uri = 'data:text/csv;charset=utf-8,' + escape(CSV);
+  
+      // Now the little tricky part.
+      // you can use either>> window.open(uri);
+      // but this will not work in some browsers
+      // or you will not get the correct file extension    
+  
+      //this trick will generate a temp <a /> tag
+      var link = document.createElement("a");    
+      link.href = uri;
+  
+      //set the visibility hidden so it will not effect on your web-layout
+      link.style = "visibility:hidden";
+      link.download = fileName + ".csv";
+  
+      //this part will append the anchor tag and remove it after automatic click
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
+    
+    /* Function that resets the property value dropdown per the property selected */
+    function generatePropertyValues(){
+      
+      // Set params 
+      var params = {
+          limit: 100      
+      }
+      if(!$("#propSelect").val()){
+        $('#actualPropValSelect').remove();
+      }
+      else {
+        // Get all property values for the top event and property selected
+        MP.api.propertyValues(window.topEvent, $("#propSelect").val(), params).done(function(results) {
+            console.log(results.values());
+            var options = {};
+            var itemList = [];
+            for (propertyVal in results.values()){
+              itemList.push({label:results.values()[propertyVal],value:results.values()[propertyVal]});
+            }
+            options['items'] = itemList;
+            $('#actualPropValSelect').remove();
+            var propValSelect = $('<div id="actualPropValSelect"></div>').appendTo('#propValueSelect').MPSelect(options);
+        });
+      }
+    }
+    
+    // Run property value dropdown refresh on prop select change
+    $("#propSelect").on('change', generatePropertyValues);
     </script>
   </body>
 </html>
